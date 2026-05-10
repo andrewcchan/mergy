@@ -133,15 +133,21 @@ When you are done, output your final comprehensive draft finding."""
             }))
     return sends
 
-from langgraph.prebuilt import create_react_agent
+from deepagents import create_deep_agent
 
 # Refactored parallel node that wraps both to return to GlobalState
 def parallel_execution_node(state: SubAgentState) -> Dict[str, Any]:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    # We use deep agents for the execution inner loop
     tools = [search_tool, scrape_tool, notebook_tool]
-    agent = create_react_agent(llm, tools)
 
-    # Run the agent
+    # create_deep_agent expects a model string like provider:model
+    agent = create_deep_agent(
+        model="openai:gpt-4o-mini",
+        tools=tools,
+        system_prompt="Use tools to gather facts and answer queries."
+    )
+
+    # Run the deep agent
     response = agent.invoke({"messages": state["messages"]})
     draft = response["messages"][-1].content
 
@@ -154,6 +160,7 @@ Draft Finding:
 Ensure it looks like a finding and has some references. If it lacks citations, add a note saying [Needs better citations].
 Output the finalized markdown content."""
 
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     critic_response = llm.invoke([SystemMessage(content=critic_prompt)])
     final_content = critic_response.content
 
