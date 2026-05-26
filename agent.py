@@ -191,6 +191,8 @@ Output the final report in Markdown format."""
     return {"report": response.content}
 
 # --- Graph Wiring ---
+from langgraph.checkpoint.memory import MemorySaver
+
 builder = StateGraph(GlobalState)
 
 builder.add_node("planner_node", planner_node)
@@ -204,4 +206,6 @@ builder.add_conditional_edges("planner_node", orchestrator_node)
 builder.add_edge("parallel_execution_node", "synthesizer_node")
 builder.add_edge("synthesizer_node", END)
 
-graph = builder.compile()
+# Add a checkpointer so we can use human-in-the-loop to approve the plan
+memory = MemorySaver()
+graph = builder.compile(checkpointer=memory, interrupt_after=["planner_node"])

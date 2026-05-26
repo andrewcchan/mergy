@@ -1,71 +1,67 @@
-import streamlit as st
 import os
+import chainlit as cl
 from agent import graph
 
-st.set_page_config(page_title="Deep Research Agent", layout="wide")
+@cl.on_chat_start
+async def start():
+    await cl.Message(content="Welcome to the Deep Research Agent 🔍\nEnter a company or topic below to generate a comprehensive, structured research report using parallel AI sub-agents. Please ensure your `OPENAI_API_KEY` is set in the environment.").send()
 
-st.title("Deep Research Agent 🔍")
-st.markdown("Enter a company or topic below to generate a comprehensive, structured research report using parallel AI sub-agents.")
-
-# Sidebar for API Key
-with st.sidebar:
-    st.header("Settings")
-    api_key = st.text_input("OpenAI API Key", type="password")
-    if api_key:
-        os.environ["OPENAI_API_KEY"] = api_key
-
-company = st.text_input("Target Company / Topic", placeholder="e.g. Anthropic, SpaceX, Stripe")
-
-if st.button("Start Research") and company:
+@cl.on_message
+async def main(message: cl.Message):
     if not os.environ.get("OPENAI_API_KEY"):
-        st.error("Please enter your OpenAI API Key in the sidebar.")
-    else:
-        st.info(f"Starting deep research on **{company}**...")
+        await cl.Message(content="⚠️ Error: OPENAI_API_KEY environment variable is not set. Please set it to proceed.").send()
+        return
 
-        # Containers for real-time progress
-        progress_container = st.container()
-        report_container = st.container()
+    company = message.content.strip()
 
-        with progress_container:
-            st.subheader("Progress")
-            status_text = st.empty()
-            vectors_list = st.empty()
-            findings_expander = st.expander("Live Findings", expanded=True)
+    await cl.Message(content=f"Starting deep research on **{company}**...").send()
 
-        initial_state = {"company": company, "plan": None, "findings": [], "report": None}
+    initial_state = {"company": company, "plan": None, "findings": [], "report": None}
 
-        status_text.text("Phase 1: Planning...")
+    final_state = None
 
-        final_state = None
+    try:
+        config = {"configurable": {"thread_id": "chainlit_session"}}
 
-        try:
-            # We use stream to show progress
-            for event in graph.stream(initial_state):
-                if "planner_node" in event:
-                    status_text.text("Phase 1 Complete. Phase 2: Orchestrating parallel agents...")
-                    plan = event["planner_node"].get("plan")
-                    if plan:
-                        vectors = [v.title for v in plan.vectors]
-                        vectors_list.markdown("**Research Vectors:**\n" + "\n".join([f"- {v}" for v in vectors]))
+        # We stream the graph events to give real-time feedback
+        async for event in graph.astream(initial_state, config=config):
+            if "planner_node" in event:
+                plan = event["planner_node"].get("plan")
+                if plan:
+                    vectors = [v.title for v in plan.vectors]
+                    plan_msg = "**Phase 1 Complete. Research Plan Proposed:**\n" + "\n".join([f"- {v}" for v in vectors])
+                    await cl.Message(content=plan_msg).send()
 
+        # The graph pauses after the planner_node due to interrupt_after
+        # Ask user for approval
+        res = await cl.AskActionMessage(
+            content="Do you approve this research plan?",
+            actions=[
+                cl.Action(name="approve", value="yes", label="✅ Approve & Continue"),
+                cl.Action(name="reject", value="no", label="❌ Reject")
+            ]
+        ).send()
+
+        if res and res.get("value") == "yes":
+            await cl.Message(content="Plan approved! Proceeding to Phase 2 (Parallel Execution)...").send()
+
+            # Resume graph execution
+            async for event in graph.astream(None, config=config):
                 if "parallel_execution_node" in event:
-                    status_text.text("Phase 2: Sub-Agents are researching vectors in parallel...")
-                    status_text.text("Received finding from a sub-agent!")
                     node_data = event["parallel_execution_node"]
                     if "findings" in node_data:
                         for f in node_data["findings"]:
-                            findings_expander.markdown(f"**Vector {f.vector_id}:**\n{f.markdown_content}\n---")
+                            finding_msg = f"**Received finding from sub-agent for Vector {f.vector_id}:**\n{f.markdown_content}"
+                            await cl.Message(content=finding_msg).send()
 
                 if "synthesizer_node" in event:
-                    status_text.text("Phase 3: Synthesizing final report...")
+                    await cl.Message(content="**Phase 3:** All vectors researched. Synthesizing final report...").send()
                     final_state = event["synthesizer_node"]
 
-            status_text.success("Research Complete!")
-
             if final_state and "report" in final_state:
-                with report_container:
-                    st.header("Final Report")
-                    st.markdown(final_state["report"])
+                await cl.Message(content=f"### Final Report\n\n{final_state['report']}").send()
+        else:
+            await cl.Message(content="Plan rejected. Research aborted.").send()
 
-        except Exception as e:
-            st.error(f"An error occurred during execution: {e}")
+    except Exception as e:
+        await cl.Message(content=f"❌ An error occurred during execution: {e}").send()
