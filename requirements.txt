@@ -1,0 +1,9 @@
+chainlit
+langgraph
+langchain
+langchain-openai
+duckduckgo-search
+beautifulsoup4
+requests
+markdownify
+pydantic
